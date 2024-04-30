@@ -1,0 +1,207 @@
+---
+title: "Machine Learning Fundamentals"
+author: "Sneha Para"
+---
+
+
+# Libraries
+
+
+```{r}
+# Import libraries
+library(tidyverse)
+library(tidyquant)
+library(broom)
+library(umap)
+```
+
+
+# Data
+
+
+```{r}
+# STOCK PRICES
+sp_500_prices_tbl <- read_rds("F:/Sneha/ss23-bdml-SnehaPara/Dataset/sp_500_prices_tbl.rds")
+sp_500_prices_tbl
+```
+
+
+```{r}
+# SECTOR INFORMATION
+sp_500_index_tbl <- read_rds("F:/Sneha/ss23-bdml-SnehaPara/Dataset/sp_500_index_tbl.rds")
+sp_500_index_tbl
+```
+
+
+## Step 1 - Convert stock prices to a standardized format (daily returns)
+
+
+```{r}
+sp_500_prices_tbl %>% glimpse()
+```
+
+
+```{r}
+# Apply your data transformation skills!
+
+sp_500_daily_returns_tbl <- sp_500_prices_tbl %>% 
+    select(symbol, date, adjusted) %>%          
+    filter(date >= "2018-01-01") %>%            
+    group_by(symbol) %>% 
+    mutate(adj_lag = lag(adjusted)) %>% 
+    filter(!is.na(adj_lag)) %>% 
+    mutate(diff = adjusted - adj_lag,
+           pct_return = diff / adj_lag) %>% 
+    select(symbol, date, pct_return)
+
+sp_500_daily_returns_tbl
+```
+
+
+## Step 2 - Convert to User-Item Format
+
+
+```{r}
+sp_500_daily_returns_tbl <- read_rds("F:/Sneha/ss23-bdml-SnehaPara/Dataset/sp_500_daily_returns_tbl.rds")
+sp_500_daily_returns_tbl
+```
+
+
+
+```{r}
+# Convert to User-Item Format
+stock_date_matrix_tbl <- sp_500_daily_returns_tbl %>% 
+    pivot_wider(names_from = date,
+                values_from = pct_return,
+                values_fill = list(pct_return = 0))
+stock_date_matrix_tbl
+```
+
+
+
+## Step 3 - Perform K-Means Clustering
+
+
+```{r}
+# Create kmeans_obj for 4 centers
+kmeans_obj <- stock_date_matrix_tbl %>% 
+    select(-symbol) %>% 
+    kmeans(centers = 4, nstart = 20)
+kmeans_obj %>% glance()
+```
+
+```{r}
+# Apply glance() to get the tot.withinss
+
+```
+
+## Step 4 - Find the optimal value of K
+
+```{r}
+kmeans_mapper <- function(center = 3) {
+    stock_date_matrix_tbl %>%
+        select(-symbol) %>%
+        kmeans(centers = center, nstart = 20)
+}
+```
+
+
+
+```{r}
+# Use purrr to map
+k_means_mapped_tbl <- tibble(centers = 1:30) %>% 
+    mutate(k_means = centers %>% map(kmeans_mapper),
+           glance = k_means %>% map(glance))
+
+
+k_means_mapped_tbl 
+```
+
+```{r}
+# Visualize Scree Plot
+k_means_mapped_tbl %>% 
+    unnest(glance) %>% 
+    ggplot(aes(x = centers, y = tot.withinss)) +
+    geom_point() +
+    geom_line()
+
+
+```
+
+
+
+## Step 5 - Apply UMAP
+
+```{r}
+k_means_mapped_tbl <- read_rds("F:/Sneha/ss23-bdml-SnehaPara/Dataset/k_means_mapped_tbl.rds")
+```
+
+```{r}
+# Apply UMAP
+umap_results <- stock_date_matrix_tbl %>% 
+    select(-symbol) %>% 
+    umap() 
+umap_results 
+```
+
+
+```{r}
+# Convert umap results to tibble with symbols
+umap_results_tbl <- umap_results$layout %>%
+    as_tibble() %>%
+    bind_cols(stock_date_matrix_tbl %>% select(symbol))
+ umap_results_tbl
+```
+
+```{r}
+# Visualize UMAP results
+umap_results_tbl %>% 
+    ggplot(aes(V1, V2)) +
+    geom_point(alpha = 0.5) +
+    theme_tq() +
+    labs(title = "UMAP Projection")
+
+```
+
+
+
+## Step 6 - Combine K-Means and UMAP
+
+```{r}
+k_means_mapped_tbl <- read_rds("F:/Sneha/ss23-bdml-SnehaPara/Dataset/k_means_mapped_tbl.rds")
+umap_results_tbl   <- read_rds("F:/Sneha/ss23-bdml-SnehaPara/Dataset/umap_results_tbl.rds")
+```
+
+
+
+```{r}
+# Get the k_means_obj from the 10th center
+k_means_obj <- k_means_mapped_tbl %>% 
+    filter(centers == 10) %>% 
+    pull(k_means) %>% 
+    pluck(1)
+
+# Store as k_means_obj
+```
+
+```{r}
+# Use your dplyr & broom skills to combine the k_means_obj with the umap_results_tbl
+umap_kmeans_results_tbl <- k_means_obj %>%
+    augment(stock_date_matrix_tbl) %>%
+    select(symbol, .cluster) %>%
+    left_join(umap_results_tbl,
+              by = "symbol") %>%
+    left_join(sp_500_index_tbl %>% select(symbol, company, sector),
+              by = "symbol")
+ umap_kmeans_results_tbl 
+```
+
+```{r}
+# Visualize the combined K-Means and UMAP results
+umap_kmeans_results_tbl %>% 
+    ggplot(aes(V1, V2, color = .cluster)) +
+    geom_point(alpha = 0.5) +
+    theme_tq() +
+    scale_color_tq()
+
+```
